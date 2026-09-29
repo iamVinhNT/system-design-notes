@@ -1,0 +1,11 @@
+{
+  "name": "rate-limiter-lab",
+  "private": true,
+  "scripts": {
+    "start": "node app.js",
+    "test": "node --test test/app.test.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
