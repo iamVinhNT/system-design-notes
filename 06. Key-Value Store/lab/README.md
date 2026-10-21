@@ -30,6 +30,41 @@ Tạo một dịch vụ lưu giá trị JSON theo key. Hệ thống mô phỏng 
 4. Tạo tình huống replica lỗi, stale read và concurrent update; ghi kết quả API.
 5. Bổ sung phép kiểm tra nhỏ cho quorum pass/fail và conflict handling.
 
+## Chạy code example
+
+Mã mô phỏng cluster ở `app/store.js`, API Express ở `app/server.js`, test dùng `node:test`.
+
+Chạy từ thư mục `06. Key-Value Store/lab/`:
+
+```bash
+npm install
+npm test
+npm start
+```
+
+Cluster mặc định có 5 node in-memory (`n1`–`n5`), `N=3`, `R=2`, `W=2`. Key được định tuyến bằng ring SHA-256 (không dùng virtual node): owner là node đầu tiên theo chiều kim đồng hồ, kèm `N-1` node kế tiếp.
+
+API:
+
+- `PUT /v1/kv/:key` với `{"value": ..., "context": {...}}` — ghi; query tùy chọn `w`, `coordinator`.
+- `GET /v1/kv/:key` — đọc; query tùy chọn `r`, `policy=siblings|lww`, `repair=true|false`.
+- `DELETE /v1/kv/:key` — ghi tombstone.
+- `GET /v1/partition/:key` — preference list của key.
+- `GET /v1/debug/replicas/:key` — trạng thái local từng replica (không qua quorum, không repair).
+- `GET|PUT /v1/config` — xem/đổi `n`, `r`, `w`; kết quả có `quorumOverlap` (`R+W>N`).
+- `GET /v1/nodes`, `POST /v1/nodes/:id/down`, `POST /v1/nodes/:id/up` — mô phỏng replica lỗi.
+
+Semantics chính:
+
+- Mỗi version mang vector clock `{nodeId: counter}`; version bị version khác bao phủ sẽ bị loại, version đồng thời được giữ thành siblings.
+- Ghi gửi tới mọi replica đang sống. Nếu số ack nhỏ hơn `W`, API trả 503 nhưng replica đã nhận **không rollback**, nên một write báo lỗi vẫn có thể xuất hiện ở lần đọc sau.
+- Đọc lấy `R` replica sống đầu tiên theo preference list; thiếu `R` thì 503. Replica lệch version được read repair (tắt bằng `repair=false`).
+- Ghi không có `context` lên node đang giữ siblings trả 409; client đọc siblings rồi ghi lại với `context` đã merge để giải quyết.
+- `policy=lww` chọn version có timestamp lớn nhất chỉ ở lúc đọc, không ghi đè siblings đang lưu, và trả `discarded`.
+- Key `[A-Za-z0-9._:-]` dài 1–256 ký tự; value JSON tối đa 10 KB.
+
+Các route quản lý node/config chỉ dành cho demo local, chưa có authentication. Kịch bản stale read và conflict nằm trong `design.md`; đó là mô phỏng thuật toán trong một process, không phải kết quả của distributed store thật. Chưa có hinted handoff, anti-entropy, gossip hay dọn tombstone.
+
 ## Bài nâng cấp
 
 - So sánh read repair với hinted handoff ở mức thiết kế.
