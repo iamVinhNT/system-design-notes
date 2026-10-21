@@ -30,6 +30,45 @@ Các API service cần ID 64-bit duy nhất, tạo nhanh trên nhiều worker v�
 4. Kiểm tra uniqueness qua nhiều worker, cùng timestamp và sequence overflow.
 5. Mô phỏng clock rollback và định nghĩa hành vi an toàn.
 
+## Chạy code example
+
+Mã encode/decode và generator ở `app/id.js`, API Express ở `app/server.js`, test dùng `node:test` với đồng hồ giả lập (không sleep).
+
+Chạy từ thư mục `07. Unique-Id Generator/lab/`:
+
+```bash
+npm install
+npm test
+npm start
+```
+
+Layout 64-bit (bit dấu luôn 0, ID vừa kiểu signed int64):
+
+| Field | Bit | Miền |
+| --- | --- | --- |
+| Sign | 1 | luôn 0 |
+| Timestamp | 41 | ms kể từ epoch `2024-01-01T00:00:00Z`, `0..2^41-1` |
+| Worker | 10 | `0..1023` |
+| Sequence | 12 | `0..4095` mỗi ms mỗi worker |
+
+Timestamp hết hạn ở `2093-09-06T15:47:35.551Z` (khoảng 69,7 năm sau epoch).
+
+API (ID trả về dạng chuỗi vì số lớn hơn 2^53 mất chính xác trong JSON number):
+
+- `POST /v1/ids?worker=1&count=1` — cấp 1–1000 ID từ một worker mô phỏng (mặc định worker đầu tiên, `1,2,3`). Dùng POST vì mỗi lần gọi đổi state của generator.
+- `GET /v1/ids/:id/decode` — tách timestamp, worker, sequence.
+- `GET /v1/layout` — bit layout, epoch, ngày hết hạn.
+- `GET /v1/workers` — danh sách worker đã cấu hình.
+
+Hành vi lỗi, không bao giờ phát ID trùng im lặng:
+
+- Hết sequence trong cùng ms: `503 SEQUENCE_OVERFLOW` kèm `Retry-After: 1`. Generator không chờ hay spin.
+- Đồng hồ lùi: `503 CLOCK_ROLLBACK` kèm số ms lùi; hết lùi thì tiếp tục.
+- Batch là all-or-nothing: lỗi giữa chừng không tiêu hao ID.
+- Worker không cấu hình trả 404; `worker`/`count`/`id` sai trả 400.
+
+Giới hạn: state chỉ trong memory và mỗi worker ID chỉ xuất hiện một lần trong process demo, nên bài này không phát hiện được hai máy dùng chung worker ID (test `duplicate worker ids collide` chứng minh hai generator cùng worker và cùng ms phát ID trùng). Sau restart, cần truyền `lastTimestamp` đã lưu bền vững, nếu không đồng hồ lùi hoặc restart trong cùng ms có thể phát lại ID. Đây là mô hình học tập, chưa đủ cho production.
+
 ## Bài nâng cấp
 
 - So sánh Snowflake-style ID với UUID và Ticket Server.
