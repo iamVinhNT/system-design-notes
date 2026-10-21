@@ -1,0 +1,11 @@
+{
+  "name": "url-shortener-lab",
+  "private": true,
+  "scripts": {
+    "start": "node app/server.js",
+    "test": "node --test app/test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
