@@ -31,10 +31,32 @@ Một dịch vụ cache cần phân phối key tới nhiều node. Khi node thay
 4. Tạo route Express.js nhận key, trả node và thống kê phân phối.
 5. So sánh số key bị remap khi thay đổi node với modulo hashing đơn giản.
 
+## Chạy code example
+
+Mã nguồn ring ở `app/ring.js`, API Express ở `app/server.js`, test dùng `node:test`.
+
+Chạy từ thư mục `05. Consistent Hashing/lab/`:
+
+```bash
+npm install
+npm test
+npm start
+```
+
+API mẫu:
+
+- `GET /api/owner?key=...` — node sở hữu key.
+- `GET /api/replicas?key=...&count=3` — các physical node khác nhau theo thứ tự ring.
+- `GET /api/nodes` — danh sách node.
+- `POST /api/nodes` với `{"name":"cache-d"}` — thêm node.
+- `DELETE /api/nodes/:name` — xóa node.
+- `GET /api/stats?keys=10000` — phân phối key hiện tại và remapping khi thêm node so với modulo.
+
+Ring dùng SHA-256 ổn định và mặc định 100 virtual nodes/physical node. Node management routes chỉ dành cho demo local; chưa có authentication. Benchmark tổng hợp đo tính toán trong process, không đại diện latency hay workload production.
+
 ## Bài nâng cấp
 
 - Thay đổi virtual-node count và đo độ lệch phân phối.
-- Xử lý hash collision xác định, thêm kiểm tra invariant cho ring rỗng.
 - Mô phỏng node weights hoặc vùng failure domain.
 
 ## Tiêu chí tự đánh giá
