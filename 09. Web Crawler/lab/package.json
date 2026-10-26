@@ -1,0 +1,12 @@
+{
+  "name": "web-crawler-lab",
+  "private": true,
+  "scripts": {
+    "start": "node app/server.js",
+    "site": "node app/lab-site.js",
+    "test": "node --test app/test/*.test.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
