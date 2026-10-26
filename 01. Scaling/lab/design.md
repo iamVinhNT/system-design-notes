@@ -4,7 +4,7 @@
 
 - Người dùng và use cases: người dùng đăng bài và đọc danh sách bài viết.
 - Chức năng trong phạm vi: lưu bài bền vững; phục vụ truy vấn đọc và ghi.
-- Ngoài phạm vi: triển khai code, chọn cloud/provider cụ thể, thiết kế failover tự động.
+- Ngoài phạm vi: chọn cloud/provider cụ thể, thiết kế failover tự động, autoscaling, đa data center. Lab chỉ dựng các tầng trong bảng giai đoạn bên dưới ở quy mô một máy.
 - Giả định cần xác nhận: lượng đọc lớn hơn ghi; có thể chấp nhận danh sách bài viết trễ vài giây sau khi ghi.
 
 ## Ước lượng và tải
@@ -21,6 +21,19 @@
 - Bottleneck dự đoán: khi DB CPU cao, slow query tăng và p95 latency xấu đi trong khi App còn tài nguyên, database có thể là nút thắt. Kiểm tra query/index trước khi thêm hạ tầng.
 
 ## Thiết kế theo giai đoạn
+
+Lab dựng 6 stage chạy được bằng Docker Compose; mỗi stage gồm mọi thứ của stage trước (xem `README.md` để chạy):
+
+| Stage | Topology | Thành phần đã chứng minh bằng `./lab.sh smoke` |
+| --- | --- | --- |
+| 0 | `App → Postgres` (app 0,5 CPU) | App chạm quota CPU, p95 tăng |
+| 1 | `nginx → app1..3 → Postgres`, session trong RAM | Tải chia đều 3 instance; session lệch instance gây 401; chết 1 instance vẫn đọc được |
+| 2 | Thêm Redis làm session store | Session dùng được trên mọi instance, qua cả lúc mất một instance |
+| 3 | Redis thêm vai trò cache-aside | Hit/miss, invalidate khi ghi, Redis chết thì đọc rơi về DB |
+| 4 | Postgres primary + streaming replica | Replication lag làm đọc cũ; tác giả đọc primary; replica chết thì đọc primary |
+| 5 | nginx `proxy_cache` cho đọc ẩn danh | `X-Edge-Cache: HIT` không tới app; request có session bypass |
+
+Bảng dưới là phân tích tổng quát của chương Scaling, gồm cả các nấc lab chưa dựng (vertical scaling, sharding, queue, observability đầy đủ).
 
 | Giai đoạn | Tín hiệu kích hoạt | Thay đổi | Lợi ích | Trade-offs / failure modes |
 | --- | --- | --- | --- | --- |
@@ -39,7 +52,9 @@
 - Nguồn dữ liệu chuẩn: primary database; mọi thao tác ghi đi vào primary. Nếu sharding được triển khai, mỗi bài viết thuộc một shard theo shard map.
 - Cache strategy: cache-aside cho feed phổ biến, TTL vài giây; CDN chỉ cache ảnh đại diện/ảnh đính kèm, không cache API/feed động.
 - Invalidation / stale data: chấp nhận feed cache chậm vài giây; phản hồi đăng bài xác nhận sau khi primary ghi thành công. Replica cũng có thể trễ, nên cần theo dõi lag và không coi cache/replica là nguồn dữ liệu chuẩn. Với ảnh thay đổi, dùng URL có version hoặc invalidate CDN cache. Tác vụ qua queue được xử lý bất đồng bộ, nên có thể trễ hơn request ghi.
-- Session strategy: chưa thuộc vấn đề DB nghẽn đang giải quyết; nếu scale App nhiều instance, session trong RAM sẽ cần sticky session tạm thời hoặc chuyển sang kho dùng chung.
+- Session strategy: lab dùng session trong RAM ở stage 1 để lộ lỗi, rồi chuyển sang Redis ở stage 2 (TTL 1 giờ). Chọn kho chung thay vì sticky session để một instance chết không làm mất session của người dùng nó đang giữ. Redis không bật persistence, nên mất Redis là mất session.
+- Đọc sau ghi (lab, stage 4+): cookie `last_write` giữ 5 giây; trong thời gian đó người ghi đọc từ primary và bỏ qua cache. Người khác có thể thấy dữ liệu cũ tới khi replica bắt kịp hoặc cache hết TTL 30 giây.
+- Edge cache (lab, stage 5): nginx cache 5 giây cho request ẩn danh; request có cookie `sid` hoặc `last_write` không đọc hay ghi cache chung. CDN trong chương cache ảnh/tài nguyên tĩnh; lab dùng nginx để cache cả API đọc công khai, một đánh đổi chỉ chấp nhận được với dữ liệu công khai và cũ vài giây.
 
 ## Failure và recovery
 
@@ -51,5 +66,6 @@
 
 - Trade-offs chính: replica/cache/CDN giúp mở rộng đọc và phục vụ nội dung tĩnh; vertical scaling giữ thiết kế đơn giản hơn; sharding chỉ tăng chiều ngang khi một primary không còn đủ, nhưng tăng độ phức tạp định tuyến và truy vấn phân tán.
 - Metric xác nhận thiết kế: DB CPU/latency, slow query và truy vấn lặp giảm; replication lag và tuổi dữ liệu cache nằm trong mức chấp nhận; p95 latency đọc cải thiện; theo dõi tài nguyên và write QPS của primary để quyết định vertical scaling hay sharding. Dashboard MVP dùng Prometheus/Grafana; log ứng dụng ở dạng JSON.
+- Quan sát từ lab: thêm app instance (stage 1) chỉ tăng RPS tới khi DB chạm trần; replica (stage 4) cùng cỡ với primary nên không tăng throughput đọc, chỉ tách đọc nặng khỏi primary để ghi ít bị chen (cải thiện nhỏ, có nhiễu); throughput đọc chỉ tăng khi thêm nhiều replica.
 - Câu hỏi còn mở: QPS và tỷ lệ đọc/ghi thực tế; ngưỡng replication lag; chính sách failover primary; ngưỡng chi phí/công suất cho vertical scaling; shard map và xử lý hotspot nếu cần sharding; retention và cảnh báo metrics.
 - Tiêu chí tự chấm: đạt / cần làm lại — đạt khi có metric kích hoạt, nêu rõ đường đi đọc/ghi, replication lag và fallback.
